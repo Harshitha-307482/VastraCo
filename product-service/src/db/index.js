@@ -105,7 +105,7 @@ const initDb = async () => {
           const size = sizes[Math.floor(Math.random() * sizes.length)];
           const color = colors[Math.floor(Math.random() * colors.length)];
           const stock = Math.floor(Math.random() * 91) + 10; // 10 to 100
-          const sku = \`SKU-\${productId.substring(0, 5)}-\${size}-\${color}-\${j}\`;
+          const sku = `SKU-${productId.substring(0, 5)}-${size}-${color}-${j}`;
           
           await client.query(
             'INSERT INTO product_variants (product_id, size, color, stock_quantity, sku) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING',
