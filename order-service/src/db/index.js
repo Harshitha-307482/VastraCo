@@ -36,6 +36,37 @@ const initDb = async () => {
         unit_price NUMERIC(10, 2) NOT NULL
       );
     `);
+
+    // Check if seed data is needed
+    const orderCheck = await client.query('SELECT COUNT(*) FROM orders');
+    if (parseInt(orderCheck.rows[0].count) === 0) {
+      console.log('Seeding initial order data...');
+      
+      // We use placeholder UUIDs for user and product for the seed data
+      const mockUserId = '11111111-1111-1111-1111-111111111111';
+      const mockProductId = '22222222-2222-2222-2222-222222222222';
+      
+      const orderRes = await client.query(
+        `INSERT INTO orders (user_id, status, total_amount, shipping_address)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [
+          mockUserId,
+          'delivered',
+          1499.00,
+          JSON.stringify({ street: '123 Fashion St', city: 'Bangalore', state: 'Karnataka', zip: '560001' })
+        ]
+      );
+      
+      const orderId = orderRes.rows[0].id;
+      
+      await client.query(
+        `INSERT INTO order_items (order_id, product_id, variant_id, product_name, size, color, quantity, unit_price)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [orderId, mockProductId, 1, 'Classic White Formal Shirt', 'L', 'White', 1, 1499.00]
+      );
+      
+      console.log('Order seed data inserted.');
+    }
     
     console.log('Order DB initialization complete.');
   } catch (err) {
