@@ -10,7 +10,15 @@ const app = express();
 const PORT = process.env.PORT || 3003;
 
 app.use(helmet());
-app.use(cors({ origin: ['http://localhost:3000', 'http://frontend:80', '*'] }));
+let corsOrigin = ['http://localhost:3000', 'http://frontend:80', '*'];
+if (process.env.CORS_ALLOWED_ORIGINS) {
+  if (process.env.CORS_ALLOWED_ORIGINS === '*') {
+    corsOrigin = '*';
+  } else {
+    corsOrigin = process.env.CORS_ALLOWED_ORIGINS.split(',');
+  }
+}
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 app.use(morgan('dev'));
 
