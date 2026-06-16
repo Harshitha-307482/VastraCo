@@ -51,7 +51,7 @@ const parseRequirements = async (message, history) => {
     else if (userText.includes('engagement') || userText.includes('ring')) occasion = 'Engagement';
     else if (userText.includes('office') || userText.includes('work') || userText.includes('interview')) occasion = 'Office';
     else if (userText.includes('festive') || userText.includes('diwali') || userText.includes('pooja')) occasion = 'Festive';
-    else occasion = 'Casual Outing';
+    else if (userText.includes('casual') || userText.includes('outing')) occasion = 'Casual Outing';
 
     // Parse colors
     const availableColors = ['Black', 'White', 'Blue', 'Red', 'Green', 'Navy', 'Grey', 'Beige', 'Pink', 'Yellow', 'Gold', 'Silver'];
@@ -60,8 +60,29 @@ const parseRequirements = async (message, history) => {
       if (userText.includes(c.toLowerCase())) colors.push(c);
     }
 
-    const accessoriesNeeded = !userText.includes('no accessories') && (userText.includes('accessory') || userText.includes('accessories') || userText.includes('watch') || userText.includes('bag') || userText.includes('yes'));
-    const footwearNeeded = !userText.includes('no footwear') && (userText.includes('footwear') || userText.includes('shoes') || userText.includes('sandals') || userText.includes('yes'));
+    let accessoriesNeeded = null;
+    let footwearNeeded = null;
+    const lowerText = userText.toLowerCase();
+    
+    // Check if the user is answering the footwear/accessories question
+    const isAffirmative = lowerText.includes('yes') || lowerText.includes('sure') || lowerText.includes('include') || lowerText.includes('yep') || lowerText.includes('yeah') || lowerText.includes('both');
+    const isNegative = lowerText.includes('no') || lowerText.includes('dont') || lowerText.includes('don\'t') || lowerText.includes('without') || lowerText.includes('only') || lowerText.includes('exclude');
+
+    if (isAffirmative) {
+      accessoriesNeeded = true;
+      footwearNeeded = true;
+    } else if (isNegative) {
+      accessoriesNeeded = false;
+      footwearNeeded = false;
+    } else {
+      // Look for individual mentions
+      if (lowerText.includes('footwear') || lowerText.includes('shoes') || lowerText.includes('sandals')) {
+        footwearNeeded = !lowerText.includes('no ') && !lowerText.includes('without');
+      }
+      if (lowerText.includes('accessory') || lowerText.includes('accessories') || lowerText.includes('watch') || lowerText.includes('bag')) {
+        accessoriesNeeded = !lowerText.includes('no ') && !lowerText.includes('without');
+      }
+    }
 
     return {
       status: (gender && budget && style) ? 'recommend' : 'chatting',
@@ -145,7 +166,8 @@ const chat = async (req, res) => {
 
     // 1. Analyze dialogue and extract criteria
     const parseResult = await parseRequirements(message, history || []);
-    
+    console.log('[AI Stylist] Extracted preferences from message:', JSON.stringify(parseResult.extractedParams));
+
     // Check if user explicitly typed a rejection message like "different options"
     const lowerMessage = message.toLowerCase();
     const isRejection = lowerMessage.includes('alternative') || 
@@ -159,11 +181,36 @@ const chat = async (req, res) => {
       parseResult.status = 'recommend';
     }
 
+    // Merge preferences across history
+    const mergedParams = mergeHistoricalParams(history || [], parseResult.extractedParams);
+    console.log('[AI Stylist] Merged user preferences across history:', JSON.stringify(mergedParams));
+
+    // Detect missing fields
+    const missingFields = [];
+    if (!mergedParams.occasion) missingFields.push('occasion');
+    if (!mergedParams.budget) missingFields.push('budget');
+    if (!mergedParams.gender) missingFields.push('gender');
+    if (!mergedParams.style) missingFields.push('style');
+    
+    const hasRequired = mergedParams.occasion && mergedParams.budget && mergedParams.gender && mergedParams.style;
+    const accessoriesFootwearAskedOrDetermined = 
+      (mergedParams.accessoriesNeeded !== undefined && mergedParams.accessoriesNeeded !== null) ||
+      (mergedParams.footwearNeeded !== undefined && mergedParams.footwearNeeded !== null);
+
+    if (!accessoriesFootwearAskedOrDetermined) {
+      missingFields.push('accessories/footwear');
+    }
+    console.log('[AI Stylist] Detected missing fields:', missingFields);
+
+    // Dynamically transition state based on history
+    if (hasRequired && (accessoriesFootwearAskedOrDetermined || parseResult.status === 'recommend' || parseResult.regenerate)) {
+      parseResult.status = 'recommendation';
+    } else {
+      parseResult.status = 'chatting';
+    }
+
     // If we are still gathering information, return the next question
     if (parseResult.status === 'chatting' && !parseResult.regenerate) {
-      // Aggregate extracted parameters from prior history if missing in parseResult
-      const mergedParams = mergeHistoricalParams(history || [], parseResult.extractedParams);
-      
       // Determine what's still missing to formulate a smart question if message is empty
       if (!parseResult.message) {
         if (!mergedParams.occasion) parseResult.message = "What occasion is this outfit for?";
@@ -173,6 +220,8 @@ const chat = async (req, res) => {
         else parseResult.message = "Got it! Would you like me to include footwear and accessories in the outfit?";
       }
 
+      console.log('[AI Stylist] Selected next question:', parseResult.message);
+
       return res.status(200).json({
         status: 'chatting',
         message: parseResult.message,
@@ -181,7 +230,7 @@ const chat = async (req, res) => {
     }
 
     // 2. We are ready to recommend (or regenerate)
-    const finalParams = mergeHistoricalParams(history || [], parseResult.extractedParams);
+    const finalParams = mergedParams;
     
     // Ensure fallback defaults if still missing
     if (!finalParams.gender) finalParams.gender = 'Male';
@@ -451,10 +500,15 @@ const mergeHistoricalParams = (history, currentParams) => {
       if (!merged.gender && turn.extractedParams.gender) merged.gender = turn.extractedParams.gender;
       if (!merged.style && turn.extractedParams.style) merged.style = turn.extractedParams.style;
       if (!merged.colors && turn.extractedParams.colors) merged.colors = turn.extractedParams.colors;
-      if (merged.accessoriesNeeded === undefined && turn.extractedParams.accessoriesNeeded !== undefined) {
+      
+      if ((merged.accessoriesNeeded === undefined || merged.accessoriesNeeded === null) && 
+          turn.extractedParams.accessoriesNeeded !== undefined && 
+          turn.extractedParams.accessoriesNeeded !== null) {
         merged.accessoriesNeeded = turn.extractedParams.accessoriesNeeded;
       }
-      if (merged.footwearNeeded === undefined && turn.extractedParams.footwearNeeded !== undefined) {
+      if ((merged.footwearNeeded === undefined || merged.footwearNeeded === null) && 
+          turn.extractedParams.footwearNeeded !== undefined && 
+          turn.extractedParams.footwearNeeded !== null) {
         merged.footwearNeeded = turn.extractedParams.footwearNeeded;
       }
     }
