@@ -16,6 +16,8 @@ ENV PRODUCT_SERVICE_HOST=product-service
 ENV PRODUCT_SERVICE_PORT=3002
 ENV ORDER_SERVICE_HOST=order-service
 ENV ORDER_SERVICE_PORT=3003
+ENV AI_SERVICE_HOST=ai-service
+ENV AI_SERVICE_PORT=3004
 
 # Restrict envsubst to only substitute our specific service host/port variables using a robust substring match
 ENV NGINX_ENVSUBST_FILTER="SERVICE_"

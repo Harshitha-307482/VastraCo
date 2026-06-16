@@ -14,6 +14,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Checkout from './pages/Checkout';
 import Orders from './pages/Orders';
+import OutfitPlanner from './pages/OutfitPlanner';
 
 function App() {
   return (
@@ -31,6 +32,7 @@ function App() {
                 <Route path="/products/:id" element={<ProductDetail />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
+                <Route path="/outfit-planner" element={<OutfitPlanner />} />
                 
                 {/* Protected Routes */}
                 <Route path="/checkout" element={

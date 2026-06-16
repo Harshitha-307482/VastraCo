@@ -26,6 +26,7 @@ const Navbar = () => {
             </Link>
             <div className="hidden md:ml-10 md:flex md:space-x-8">
               <Link to="/products" className="hover:text-brand-accent px-3 py-2 rounded-md text-sm font-medium transition-colors">Shop</Link>
+              <Link to="/outfit-planner" className="hover:text-brand-accent px-3 py-2 rounded-md text-sm font-medium transition-colors">AI Outfit Planner</Link>
               <Link to="/products?category=Men's Shirts" className="hover:text-brand-accent px-3 py-2 rounded-md text-sm font-medium transition-colors">Men</Link>
               <Link to="/products?category=Women's Dresses" className="hover:text-brand-accent px-3 py-2 rounded-md text-sm font-medium transition-colors">Women</Link>
             </div>
