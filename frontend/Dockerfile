@@ -17,8 +17,8 @@ ENV PRODUCT_SERVICE_PORT=3002
 ENV ORDER_SERVICE_HOST=order-service
 ENV ORDER_SERVICE_PORT=3003
 
-# Restrict envsubst to only substitute our specific service host/port variables
-ENV NGINX_ENVSUBST_FILTER="USER_SERVICE_HOST USER_SERVICE_PORT PRODUCT_SERVICE_HOST PRODUCT_SERVICE_PORT ORDER_SERVICE_HOST ORDER_SERVICE_PORT"
+# Restrict envsubst to only substitute our specific service host/port variables using a robust substring match
+ENV NGINX_ENVSUBST_FILTER="SERVICE_"
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/templates/default.conf.template
