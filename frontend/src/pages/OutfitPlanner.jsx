@@ -3,6 +3,8 @@ import { Send, Sparkles, RefreshCw, ShoppingBag, Image, AlertTriangle, Check, X,
 import api from '../api/axios';
 import { CartContext } from '../context/CartContext';
 
+const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=200&auto=format&fit=crop&q=60';
+
 const OutfitPlanner = () => {
   const [messages, setMessages] = useState([
     {
@@ -499,6 +501,7 @@ const OutfitPlanner = () => {
                                     src={item.image_url} 
                                     alt={item.name} 
                                     className="w-12 h-15 object-cover rounded-lg bg-gray-200 flex-shrink-0"
+                                    onError={(e) => { e.target.onerror = null; e.target.src = FALLBACK_IMAGE; }}
                                   />
                                   <div className="flex-1 min-w-0">
                                     <span className="text-[10px] text-indigo-600 font-semibold uppercase block tracking-wider">{item.category_name}</span>
@@ -680,9 +683,10 @@ const OutfitPlanner = () => {
                         className="flex items-center space-x-3 bg-white border border-slate-200 rounded-xl p-3 hover:border-indigo-500 hover:shadow-md cursor-pointer transition-all"
                       >
                         <img 
-                          src={alt.image_url} 
-                          alt={alt.name} 
-                          className="w-16 h-20 object-cover rounded-lg bg-gray-100 flex-shrink-0"
+                           src={alt.image_url} 
+                           alt={alt.name} 
+                           className="w-16 h-20 object-cover rounded-lg bg-gray-100 flex-shrink-0"
+                           onError={(e) => { e.target.onerror = null; e.target.src = FALLBACK_IMAGE; }}
                         />
                         <div className="flex-1 min-w-0">
                           <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wide block">{alt.brand}</span>
@@ -750,6 +754,7 @@ const OutfitPlanner = () => {
                       src={previewImage} 
                       alt="AI Styled try-on photograph" 
                       className="w-full h-full object-cover"
+                      onError={(e) => { e.target.onerror = null; e.target.src = FALLBACK_IMAGE; }}
                     />
                   </div>
                 ) : (

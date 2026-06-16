@@ -7,20 +7,91 @@ const genAI = geminiApiKey && !geminiApiKey.startsWith('dummy') ? new GoogleGene
 
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL || 'http://product-service:3002';
 
-// Standard fallback fashion model image URLs for preview generation
-const modelPreviews = {
+// Curated pool of fashion model preview images, indexed by gender + style
+const modelPreviewPool = {
   Male: {
-    Traditional: "https://images.unsplash.com/photo-1603415526960-f7e0328c63b1?w=600&auto=format&fit=crop&q=80",
-    Western: "https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=600&auto=format&fit=crop&q=80",
-    Casual: "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=600&auto=format&fit=crop&q=80",
-    Formal: "https://images.unsplash.com/photo-1593030103066-0093718efeb9?w=600&auto=format&fit=crop&q=80"
+    Traditional: [
+      "photo-1603415526960-f7e0328c63b1", "photo-1610030470390-34444c9b2923",
+      "photo-1613206484394-b2586bf7fbfa", "photo-1611601679655-7c8bc197f0c6",
+      "photo-1599643478518-a784e5dc4c8f"
+    ],
+    Western: [
+      "photo-1507679799987-c73779587ccf", "photo-1519085360753-af0119f7cbe7",
+      "photo-1488161628813-04466f872be2", "photo-1506794778202-cad84cf45f1d",
+      "photo-1472099645785-5658abf4ff4e"
+    ],
+    Casual: [
+      "photo-1519085360753-af0119f7cbe7", "photo-1506794778202-cad84cf45f1d",
+      "photo-1488161628813-04466f872be2", "photo-1472099645785-5658abf4ff4e",
+      "photo-1500648767791-00dcc994a43e"
+    ],
+    Formal: [
+      "photo-1593030103066-0093718efeb9", "photo-1594938298603-c8148c4dae35",
+      "photo-1591047139829-d91aecb6caea", "photo-1507679799987-c73779587ccf",
+      "photo-1601662528567-526d00147750"
+    ],
+    Sporty: [
+      "photo-1530731141654-5993c3016c77", "photo-1571019613454-1cb2f99b2d8b",
+      "photo-1534438327276-14e5300c3a48", "photo-1517836357463-d25dfeac3438",
+      "photo-1549476464-37392f717541"
+    ]
   },
   Female: {
-    Traditional: "https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=600&auto=format&fit=crop&q=80",
-    Western: "https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?w=600&auto=format&fit=crop&q=80",
-    Casual: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80",
-    Formal: "https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?w=600&auto=format&fit=crop&q=80"
+    Traditional: [
+      "photo-1610030469983-98e550d6193c", "photo-1611601679655-7c8bc197f0c6",
+      "photo-1583391733958-d25e07fac0ec", "photo-1599643478518-a784e5dc4c8f",
+      "photo-1605100804763-247f67b3557e"
+    ],
+    Western: [
+      "photo-1572804013309-59a88b7e92f1", "photo-1566174053879-31528523f8ae",
+      "photo-1515886657613-9f3515b0c78f", "photo-1496747611176-843222e1e57c",
+      "photo-1529139574466-a303027c1d8b"
+    ],
+    Casual: [
+      "photo-1534528741775-53994a69daeb", "photo-1488716820095-cbe80883c496",
+      "photo-1488161628813-04466f872be2", "photo-1483985988355-763728e1935b",
+      "photo-1469334031218-e382a71b716b"
+    ],
+    Formal: [
+      "photo-1487412720507-e7ab37603c6f", "photo-1551836022-d5d88e9218df",
+      "photo-1581044777550-4cfa60707c03", "photo-1573497019418-b400bb3ab074",
+      "photo-1524504388940-b1c1722653e1"
+    ],
+    Sporty: [
+      "photo-1483721310020-03333e577078", "photo-1518310952931-b1de897abd40",
+      "photo-1494390248081-4e521a5940db", "photo-1571019613454-1cb2f99b2d8b",
+      "photo-1517960413843-0aee8e2b3285"
+    ]
   }
+};
+
+/**
+ * Picks a curated try-on model image matching gender, style, and outfit type.
+ */
+const getCuratedTryOnImage = (gender, style, items) => {
+  const genderKey = (gender === 'Female') ? 'Female' : 'Male';
+  const pool = modelPreviewPool[genderKey];
+
+  // Detect outfit type from items for smarter selection
+  const itemCategories = (items || []).map(i => (i.category || i.category_name || '').toLowerCase());
+  let styleKey = style || 'Casual';
+
+  // Override style key based on detected categories
+  if (itemCategories.some(c => ['sarees', 'saree', 'lehenga', 'lehengas', 'sherwani', 'kurta'].includes(c))) {
+    styleKey = 'Traditional';
+  } else if (itemCategories.some(c => ['suits', 'suit', 'blazers', 'blazer'].includes(c))) {
+    styleKey = 'Formal';
+  } else if (itemCategories.some(c => ['gowns', 'gown', 'dresses', 'dress'].includes(c))) {
+    styleKey = 'Western';
+  }
+
+  const validStyleKey = pool[styleKey] ? styleKey : 'Casual';
+  const photos = pool[validStyleKey];
+
+  // Pick based on a hash of the items to be deterministic for same outfit
+  const hash = (items || []).length > 0 ? items[0].id?.charCodeAt(0) || 0 : 0;
+  const photoId = photos[hash % photos.length];
+  return `https://images.unsplash.com/${photoId}?w=600&auto=format&fit=crop&q=80`;
 };
 
 /**
@@ -327,10 +398,30 @@ const chat = async (req, res) => {
       });
     }
     if (categories.Footwear.length === 0) {
-      categories.Footwear = allProducts.filter(p => ['Formal Shoes', 'Loafers', 'Sneakers', 'Heels', 'Flats', 'Sandals'].includes(p.category_name));
+      // Respect gender in fallback - only pick gender-appropriate or Unisex footwear
+      categories.Footwear = allProducts.filter(p =>
+        ['Formal Shoes', 'Loafers', 'Sneakers', 'Heels', 'Flats', 'Sandals'].includes(p.category_name) &&
+        (p.gender === finalParams.gender || p.gender === 'Unisex')
+      );
+      // Final backstop: any footwear if still empty
+      if (categories.Footwear.length === 0) {
+        categories.Footwear = allProducts.filter(p =>
+          ['Loafers', 'Sneakers', 'Sandals'].includes(p.category_name)
+        );
+      }
     }
     if (categories.Accessory.length === 0) {
-      categories.Accessory = allProducts.filter(p => ['Watches', 'Belts', 'Wallets', 'Sunglasses', 'Earrings'].includes(p.category_name));
+      // Respect gender in fallback - only pick gender-appropriate or Unisex accessories
+      categories.Accessory = allProducts.filter(p =>
+        ['Watches', 'Belts', 'Wallets', 'Sunglasses', 'Earrings', 'Handbags'].includes(p.category_name) &&
+        (p.gender === finalParams.gender || p.gender === 'Unisex')
+      );
+      // Final backstop: unisex accessories if still empty
+      if (categories.Accessory.length === 0) {
+        categories.Accessory = allProducts.filter(p =>
+          ['Watches', 'Belts', 'Wallets', 'Sunglasses'].includes(p.category_name)
+        );
+      }
     }
 
     // Build 3 Bundles
@@ -464,11 +555,8 @@ const preview = async (req, res) => {
       }
     }
 
-    // Fallback static high quality Unsplash model image matching gender and style
-    const genderKey = gender === 'Female' ? 'Female' : 'Male';
-    const styleKey = modelPreviews[genderKey][style] ? style : 'Casual';
-    const imageUrl = modelPreviews[genderKey][styleKey];
-
+    // Fallback: use curated try-on image pool for gender + style matching
+    const imageUrl = getCuratedTryOnImage(gender, style, items);
     return res.status(200).json({ imageUrl });
 
   } catch (error) {
