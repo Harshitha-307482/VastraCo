@@ -2,8 +2,17 @@ const ProductModel = require('../models/productModel');
 
 const getProducts = async (req, res) => {
   try {
-    const { category, search, page, limit } = req.query;
-    const products = await ProductModel.getProducts(category, search, parseInt(page) || 1, parseInt(limit) || 20);
+    const { category, search, page, limit, gender, style, color, occasion } = req.query;
+    const products = await ProductModel.getProducts(
+      category, 
+      search, 
+      parseInt(page) || 1, 
+      parseInt(limit) || 20,
+      gender,
+      style,
+      color,
+      occasion
+    );
     res.status(200).json(products);
   } catch (error) {
     console.error('getProducts error:', error);

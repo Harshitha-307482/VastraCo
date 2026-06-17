@@ -91,16 +91,42 @@ services:
     networks:
       - vastraco-network
 
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    ports:
+      - "3004:3004"
+    env_file:
+      - .env
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - product-service
+    networks:
+      - vastraco-network
+
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
       - "3000:80"
+    environment:
+      - USER_SERVICE_HOST=user-service
+      - USER_SERVICE_PORT=3001
+      - PRODUCT_SERVICE_HOST=product-service
+      - PRODUCT_SERVICE_PORT=3002
+      - ORDER_SERVICE_HOST=order-service
+      - ORDER_SERVICE_PORT=3003
+      - AI_SERVICE_HOST=ai-service
+      - AI_SERVICE_PORT=3004
     depends_on:
       - user-service
       - product-service
       - order-service
+      - ai-service
     networks:
       - vastraco-network
 networks:

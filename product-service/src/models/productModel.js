@@ -1,7 +1,7 @@
 const db = require('../db');
 
 const ProductModel = {
-  async getProducts(categoryId, search, page = 1, limit = 10) {
+  async getProducts(categoryId, search, page = 1, limit = 10, gender, style, color, occasion) {
     const offset = (page - 1) * limit;
     let query = `
       SELECT p.*, c.name as category_name 
@@ -21,6 +21,30 @@ const ProductModel = {
     if (search) {
       query += ` AND p.name ILIKE $${paramCount}`;
       params.push(`%${search}%`);
+      paramCount++;
+    }
+
+    if (gender) {
+      query += ` AND p.gender ILIKE $${paramCount}`;
+      params.push(gender);
+      paramCount++;
+    }
+
+    if (style) {
+      query += ` AND p.style ILIKE $${paramCount}`;
+      params.push(style);
+      paramCount++;
+    }
+
+    if (color) {
+      query += ` AND EXISTS (SELECT 1 FROM product_variants pv WHERE pv.product_id = p.id AND pv.color ILIKE $${paramCount})`;
+      params.push(color);
+      paramCount++;
+    }
+
+    if (occasion) {
+      query += ` AND p.occasion @> $${paramCount}::jsonb`;
+      params.push(JSON.stringify([occasion]));
       paramCount++;
     }
 
