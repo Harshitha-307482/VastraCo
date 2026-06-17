@@ -106,9 +106,16 @@ const parseRequirements = async (message, history) => {
     const isFemale = userText.includes('female') || userText.includes('woman') || userText.includes('women');
     const gender = isMale ? 'Male' : (isFemale ? 'Female' : null);
 
-    const isTraditional = userText.includes('traditional') || userText.includes('indian') || userText.includes('ethnic');
-    const isWestern = userText.includes('western') || userText.includes('formal') || userText.includes('suit') || userText.includes('casual');
-    const style = isTraditional ? 'Traditional' : (isWestern ? 'Western' : null);
+    const isTraditional = userText.includes('traditional') || userText.includes('indian') || userText.includes('ethnic')
+      || userText.includes('kurta') || userText.includes('saree') || userText.includes('sherwani')
+      || userText.includes('lehenga') || userText.includes('salwar') || userText.includes('anarkali');
+    const isFormal = !isTraditional && (userText.includes('formal') || userText.includes('blazer')
+      || userText.includes('suit') || userText.includes('interview') || userText.includes('office'));
+    const isCasual = !isTraditional && !isFormal && userText.includes('casual');
+    const isWestern = !isTraditional && !isFormal && !isCasual
+      && (userText.includes('western') || userText.includes('gown') || userText.includes('dress')
+      || userText.includes('jeans') || userText.includes('skirt'));
+    const style = isTraditional ? 'Traditional' : (isFormal ? 'Formal' : (isCasual ? 'Casual' : (isWestern ? 'Western' : null)));
 
     // Extract budget e.g., "under 5000", "under rs 5000", "budget 8000"
     const budgetMatch = userText.match(/(?:under|below|budget|rs\.?|₹)\s?(\d+)/i) || message.match(/(\d+)/);
@@ -315,114 +322,159 @@ const chat = async (req, res) => {
     });
     
     const allProducts = catalogRes.data;
+    console.log(`[AI Stylist] Total products in catalog: ${allProducts.length}`);
 
-    // Filter catalog based on gender, style, and occasion
-    let filtered = allProducts.filter(p => {
-      // Match gender
-      const matchesGender = p.gender === finalParams.gender || p.gender === 'Unisex';
-      // Match style
-      const matchesStyle = p.style === finalParams.style || !finalParams.style;
-      // Match occasion
+    // --- Layered filtering: strict → relax occasion → relax style ---
+    // Style matching notes:
+    //   Traditional → strict match (only 'Traditional' tagged products)
+    //   Formal      → matches 'Formal' products
+    //   Western     → matches 'Western', 'Casual', OR 'Formal' products
+    //                 (DB has Shirts as Casual, Jeans as Casual — all valid Western items)
+    //   Casual      → matches 'Casual' products
+    const styleMatches = (productStyle, requestedStyle) => {
+      if (!requestedStyle) return true;
+      if (requestedStyle === 'Traditional') return productStyle === 'Traditional';
+      if (requestedStyle === 'Formal') return productStyle === 'Formal' || productStyle === 'Western';
+      if (requestedStyle === 'Western') return productStyle === 'Western' || productStyle === 'Casual' || productStyle === 'Formal';
+      if (requestedStyle === 'Casual') return productStyle === 'Casual' || productStyle === 'Western';
+      return productStyle === requestedStyle;
+    };
+
+    const buildFilter = (gender, style, occasion) => (p) => {
+      const matchesGender = p.gender === gender || p.gender === 'Unisex';
+      const matchesStyle = styleMatches(p.style, style);
       let matchesOccasion = true;
-      if (finalParams.occasion && p.occasion) {
+      if (occasion && p.occasion) {
         try {
-          const occasionsList = Array.isArray(p.occasion) ? p.occasion : JSON.parse(p.occasion);
-          matchesOccasion = occasionsList.some(occ => occ.toLowerCase() === finalParams.occasion.toLowerCase());
-        } catch (e) {
-          matchesOccasion = false;
-        }
+          const oList = Array.isArray(p.occasion) ? p.occasion : JSON.parse(p.occasion);
+          matchesOccasion = oList.some(o => o.toLowerCase() === occasion.toLowerCase());
+        } catch (e) { matchesOccasion = false; }
       }
       return matchesGender && matchesStyle && matchesOccasion;
-    });
+    };
 
-    // Apply color filtering if specified
+    // Layer 1: gender + style + occasion (strict)
+    let filtered = allProducts.filter(buildFilter(finalParams.gender, finalParams.style, finalParams.occasion));
+    console.log(`[AI Stylist] Layer 1 filter (gender+style+occasion): ${filtered.length} products`);
+
+    // Layer 2: relax occasion if too few results
+    if (filtered.length < 6) {
+      filtered = allProducts.filter(buildFilter(finalParams.gender, finalParams.style, null));
+      console.log(`[AI Stylist] Layer 2 filter (gender+style): ${filtered.length} products`);
+    }
+
+    // Layer 3: relax style if still too few
+    if (filtered.length < 6) {
+      filtered = allProducts.filter(buildFilter(finalParams.gender, null, null));
+      console.log(`[AI Stylist] Layer 3 filter (gender only): ${filtered.length} products`);
+    }
+
+    // Apply color filtering if specified (soft — only if enough matches)
     if (finalParams.colors && finalParams.colors.length > 0) {
       const targetColors = finalParams.colors.map(c => c.toLowerCase());
       const colorMatches = filtered.filter(p => {
         const pName = p.name.toLowerCase();
         return targetColors.some(color => pName.includes(color));
       });
-      // Fallback if color filter is too restrictive
-      if (colorMatches.length > 0) {
+      if (colorMatches.length >= 3) {
         filtered = colorMatches;
       }
     }
 
-    // Implement the Outfit Variety Rule: sort products to prioritize unseen ones
+    // Outfit Variety Rule: deprioritize previously seen products
     const excludedSet = new Set(excludeProductIds);
     filtered.sort((a, b) => {
-      const aExcluded = excludedSet.has(a.id) ? 1 : 0;
-      const bExcluded = excludedSet.has(b.id) ? 1 : 0;
-      return aExcluded - bExcluded; // Unseen (0) comes before seen (1)
+      const aEx = excludedSet.has(a.id) ? 1 : 0;
+      const bEx = excludedSet.has(b.id) ? 1 : 0;
+      return aEx - bEx;
     });
 
-    // Segment items by categories
+    // --- Segment products by outfit role ---
+    // Blouses get their own slot so they pair with Sarees instead of acting as tops
     const categories = {
-      Top: [],
-      Bottom: [],
-      Standalone: [],
+      Top: [],       // Shirts, T-Shirts, Kurtis, Crop Tops
+      Bottom: [],    // Trousers, Jeans, Chinos, Skirts
+      Blouses: [],   // Blouses (pair with Sarees)
+      Standalone: [], // Sarees, Lehengas, Kurta, Sherwani, Dresses, Suits, etc.
       Footwear: [],
       Accessory: []
     };
 
     filtered.forEach(p => {
       const cat = p.category_name || '';
-      if (['Shirts', 'T-Shirts', 'Polo T-Shirts', 'Kurtis', 'Crop Tops', 'Blouses'].includes(cat)) {
+      if (['Shirts', 'T-Shirts', 'Polo T-Shirts', 'Kurtis', 'Crop Tops'].includes(cat)) {
         categories.Top.push(p);
       } else if (['Trousers', 'Jeans', 'Chinos', 'Skirts'].includes(cat)) {
         categories.Bottom.push(p);
-      } else if (['Sarees', 'Lehengas', 'Salwar Suits', 'Anarkalis', 'Dresses', 'Gowns', 'Blazers', 'Suits', 'Jackets', 'Sherwani', 'Kurta'].includes(cat)) {
+      } else if (cat === 'Blouses') {
+        categories.Blouses.push(p);
+      } else if (['Sarees', 'Lehengas', 'Salwar Suits', 'Anarkalis', 'Dresses', 'Gowns',
+                  'Blazers', 'Suits', 'Jackets', 'Sherwani', 'Kurta'].includes(cat)) {
         categories.Standalone.push(p);
       } else if (['Formal Shoes', 'Loafers', 'Sneakers', 'Heels', 'Flats', 'Sandals'].includes(cat)) {
         categories.Footwear.push(p);
-      } else if (['Watches', 'Belts', 'Wallets', 'Sunglasses', 'Earrings', 'Bangles', 'Necklaces', 'Rings', 'Handbags', 'Clutches'].includes(cat)) {
+      } else if (['Watches', 'Belts', 'Wallets', 'Sunglasses', 'Earrings',
+                  'Bangles', 'Necklaces', 'Rings', 'Handbags', 'Clutches'].includes(cat)) {
         categories.Accessory.push(p);
       }
     });
+    console.log(`[AI Stylist] Segmented — Top:${categories.Top.length} Bottom:${categories.Bottom.length} Standalone:${categories.Standalone.length} Footwear:${categories.Footwear.length} Accessory:${categories.Accessory.length}`);
 
-    // Fallbacks from full catalog if filtered categories are empty
+    // --- Fallbacks from full catalog if segments are empty ---
     if (categories.Top.length === 0 && categories.Standalone.length === 0) {
       allProducts.forEach(p => {
         const cat = p.category_name || '';
         if (p.gender === finalParams.gender || p.gender === 'Unisex') {
-          if (['Shirts', 'T-Shirts', 'Polo T-Shirts', 'Kurtis'].includes(cat)) categories.Top.push(p);
-          else if (['Dresses', 'Gowns', 'Kurta'].includes(cat)) categories.Standalone.push(p);
+          if (['Shirts', 'T-Shirts', 'Polo T-Shirts', 'Kurtis', 'Crop Tops'].includes(cat)) categories.Top.push(p);
+          else if (['Sarees', 'Lehengas', 'Salwar Suits', 'Anarkalis', 'Dresses',
+                    'Gowns', 'Blazers', 'Suits', 'Jackets', 'Sherwani', 'Kurta'].includes(cat)) categories.Standalone.push(p);
         }
       });
     }
     if (categories.Bottom.length === 0) {
       allProducts.forEach(p => {
-        if ((p.gender === finalParams.gender || p.gender === 'Unisex') && ['Trousers', 'Jeans', 'Chinos'].includes(p.category_name)) {
+        if ((p.gender === finalParams.gender || p.gender === 'Unisex') &&
+            ['Trousers', 'Jeans', 'Chinos', 'Skirts'].includes(p.category_name)) {
           categories.Bottom.push(p);
         }
       });
     }
     if (categories.Footwear.length === 0) {
-      // Respect gender in fallback - only pick gender-appropriate or Unisex footwear
       categories.Footwear = allProducts.filter(p =>
         ['Formal Shoes', 'Loafers', 'Sneakers', 'Heels', 'Flats', 'Sandals'].includes(p.category_name) &&
         (p.gender === finalParams.gender || p.gender === 'Unisex')
       );
-      // Final backstop: any footwear if still empty
       if (categories.Footwear.length === 0) {
-        categories.Footwear = allProducts.filter(p =>
-          ['Loafers', 'Sneakers', 'Sandals'].includes(p.category_name)
-        );
+        categories.Footwear = allProducts.filter(p => ['Loafers', 'Sneakers', 'Sandals'].includes(p.category_name));
       }
     }
     if (categories.Accessory.length === 0) {
-      // Respect gender in fallback - only pick gender-appropriate or Unisex accessories
       categories.Accessory = allProducts.filter(p =>
         ['Watches', 'Belts', 'Wallets', 'Sunglasses', 'Earrings', 'Handbags'].includes(p.category_name) &&
         (p.gender === finalParams.gender || p.gender === 'Unisex')
       );
-      // Final backstop: unisex accessories if still empty
       if (categories.Accessory.length === 0) {
-        categories.Accessory = allProducts.filter(p =>
-          ['Watches', 'Belts', 'Wallets', 'Sunglasses'].includes(p.category_name)
-        );
+        categories.Accessory = allProducts.filter(p => ['Watches', 'Belts', 'Wallets', 'Sunglasses'].includes(p.category_name));
       }
     }
+    if (categories.Blouses.length === 0) {
+      // Fallback: grab from full catalog regardless of style filter
+      categories.Blouses = allProducts.filter(p => p.category_name === 'Blouses');
+    }
+
+    // Sort each category by price ascending for budget-aware selection
+    Object.keys(categories).forEach(key => {
+      categories[key].sort((a, b) => parseFloat(a.price) - parseFloat(b.price));
+    });
+
+    const budgetLimit = finalParams.budget || 5000;
+
+    // Determine outfit strategy:
+    // Traditional style → ALWAYS prefer Standalone garments (Kurta, Saree, Sherwani, etc.)
+    // Western / Casual / Formal → prefer Top + Bottom combo
+    const isTraditionalStyle = finalParams.style === 'Traditional';
+    const hasStandalone = categories.Standalone.length > 0;
+    const hasTopBottom = categories.Top.length > 0;
 
     // Build 3 Bundles
     const bundles = [];
@@ -432,69 +484,98 @@ const chat = async (req, res) => {
       { name: "Vibrant Fashion", desc: "A stylish, comfortable blend tailored for ultimate expression." }
     ];
 
+    // Helper: pick item within remaining budget from a sorted (asc price) list
+    const pickAffordable = (list, remainingBudget, offset, maxFraction = 1.0) => {
+      const cap = remainingBudget * maxFraction;
+      const affordable = list.filter(p => parseFloat(p.price) <= cap);
+      if (affordable.length === 0) return null; // nothing fits budget
+      return affordable[offset % affordable.length];
+    };
+
     for (let i = 0; i < 3; i++) {
       const items = [];
+      let remainingBudget = budgetLimit;
       let topItem = null;
-      let bottomItem = null;
 
-      // 1. Choose Core Outfit (Standalone or Top + Bottom)
-      // alternate between Standalone and Top+Bottom combos
-      const useStandalone = (i % 2 === 1 && categories.Standalone.length > i) || (categories.Top.length === 0);
-      if (useStandalone && categories.Standalone.length > i) {
-        topItem = categories.Standalone[i];
-        items.push(topItem);
-      } else {
-        topItem = categories.Top[i % categories.Top.length];
-        bottomItem = categories.Bottom[i % categories.Bottom.length];
-        if (topItem) items.push(topItem);
-        if (bottomItem) items.push(bottomItem);
+      // ---- Step 1: Pick core garment ----
+      const useStandalone = (isTraditionalStyle && hasStandalone) || (!hasTopBottom && hasStandalone);
+
+      if (useStandalone && categories.Standalone.length > 0) {
+        // For Traditional: use different Standalone item for each bundle
+        // Reserve ~40% budget for footwear + accessory
+        topItem = pickAffordable(categories.Standalone, remainingBudget, i, 0.6)
+          || categories.Standalone[i % categories.Standalone.length];
+        if (topItem) {
+          items.push(topItem);
+          remainingBudget -= parseFloat(topItem.price);
+        }
+
+        // Saree → add a Blouse if budget allows
+        if (topItem && topItem.category_name === 'Sarees' && categories.Blouses.length > 0) {
+          const blouse = categories.Blouses.find(
+            b => parseFloat(b.price) <= remainingBudget && !excludedSet.has(b.id)
+          );
+          if (blouse) {
+            items.push(blouse);
+            remainingBudget -= parseFloat(blouse.price);
+          }
+        }
+      } else if (categories.Top.length > 0) {
+        // Western / Casual / Formal: Top + Bottom combo
+        // Reserve ~40% budget for footwear + accessory
+        topItem = pickAffordable(categories.Top, remainingBudget, i, 0.4)
+          || categories.Top[i % categories.Top.length];
+        if (topItem) {
+          items.push(topItem);
+          remainingBudget -= parseFloat(topItem.price);
+        }
+        if (categories.Bottom.length > 0) {
+          const bottomItem = pickAffordable(categories.Bottom, remainingBudget, i, 0.5)
+            || categories.Bottom[i % categories.Bottom.length];
+          if (bottomItem) {
+            items.push(bottomItem);
+            remainingBudget -= parseFloat(bottomItem.price);
+          }
+        }
       }
 
-      // Special rule: if Saree is selected, grab a Blouse if available
-      if (topItem && topItem.category_name === 'Sarees' && categories.Standalone.length > 0) {
-        const blouse = categories.Standalone.find(b => b.category_name === 'Blouses' && !excludedSet.has(b.id));
-        if (blouse) items.push(blouse);
+      // ---- Step 2: Add Footwear (budget-aware) ----
+      if (finalParams.footwearNeeded !== false && categories.Footwear.length > 0 && remainingBudget > 400) {
+        const shoes = pickAffordable(categories.Footwear, remainingBudget, i, 0.7);
+        if (shoes) {
+          items.push(shoes);
+          remainingBudget -= parseFloat(shoes.price);
+        }
       }
 
-      // 2. Add Footwear if requested or optional
-      if (finalParams.footwearNeeded !== false && categories.Footwear.length > 0) {
-        const shoes = categories.Footwear[i % categories.Footwear.length];
-        if (shoes) items.push(shoes);
+      // ---- Step 3: Add Accessory (budget-aware) ----
+      if (finalParams.accessoriesNeeded !== false && categories.Accessory.length > 0 && remainingBudget > 150) {
+        const accessory = pickAffordable(categories.Accessory, remainingBudget, i, 1.0);
+        if (accessory) {
+          items.push(accessory);
+        }
       }
 
-      // 3. Add Accessory if requested or optional
-      if (finalParams.accessoriesNeeded !== false && categories.Accessory.length > 0) {
-        const accessory = categories.Accessory[i % categories.Accessory.length];
-        if (accessory) items.push(accessory);
-      }
-
-      // Clean undefined items
       const validItems = items.filter(item => !!item);
       const totalPrice = validItems.reduce((sum, item) => sum + parseFloat(item.price), 0);
 
       // Scoring
-      const budgetLimit = finalParams.budget || 5000;
-      const budgetMatch = totalPrice <= budgetLimit 
-        ? 100 
+      const budgetMatch = totalPrice <= budgetLimit
+        ? 100
         : Math.max(50, Math.round((1 - (totalPrice - budgetLimit) / budgetLimit) * 100));
 
-      const styleMatch = 90 + (i * 3) + Math.floor(Math.random() * 3); // 90% - 98%
-      const occasionMatch = 92 + (i * 2) + Math.floor(Math.random() * 4); // 92% - 99%
+      const styleMatch = 90 + (i * 3) + Math.floor(Math.random() * 3);
+      const occasionMatch = 92 + (i * 2) + Math.floor(Math.random() * 4);
 
-      // Explanation
       const styleName = finalParams.style.toLowerCase();
       const occasionName = finalParams.occasion.toLowerCase();
-      const explanation = `${bundleStyles[i].name} features a high-grade ${topItem ? topItem.brand : 'premium'} style. This combination is tailored for a ${styleName} vibe, matching the ${occasionName} occasion requirement. At ₹${totalPrice}, it represents a ${budgetMatch}% budget match score.`;
+      const explanation = `${bundleStyles[i].name} features a high-grade ${topItem ? topItem.brand : 'premium'} style. This combination is tailored for a ${styleName} vibe, matching the ${occasionName} occasion requirement. At ₹${totalPrice.toFixed(0)}, it represents a ${budgetMatch}% budget match score.`;
 
       bundles.push({
         bundleId: i + 1,
         name: bundleStyles[i].name,
         totalPrice,
-        scores: {
-          styleMatch,
-          budgetMatch,
-          occasionMatch
-        },
+        scores: { styleMatch, budgetMatch, occasionMatch },
         explanation,
         items: validItems
       });
