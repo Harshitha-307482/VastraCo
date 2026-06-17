@@ -146,71 +146,75 @@ const initDb = async () => {
       for (const catName of categories) {
         const slug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
         const res = await client.query(
-          'INSERT INTO categories (name, slug) VALUES ($1, $2) RETURNING id',
+          'INSERT INTO categories (name, slug) VALUES ($1, $2) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id',
           [catName, slug]
         );
         catMap[catName] = res.rows[0].id;
       }
 
-      console.log('Seeding products...');
-      for (const catName of categories) {
-        const config = categoryConfig[catName];
-        
-        for (let i = 0; i < config.count; i++) {
-          const brand = config.brands[i % config.brands.length];
-          const color = config.colors[i % config.colors.length];
-          const style = config.styles[i % config.styles.length];
+      const prodCheck = await client.query('SELECT COUNT(*) FROM products');
+      if (parseInt(prodCheck.rows[0].count) < 50) {
+        console.log('Seeding products...');
+        for (const catName of categories) {
+          const config = categoryConfig[catName];
           
-          // Realistic Price Boundaries Clamping & Niceness
-          const rawPrice = config.minPrice + Math.floor(Math.random() * (config.maxPrice - config.minPrice + 1));
-          const price = Math.min(config.maxPrice, Math.max(config.minPrice, Math.round(rawPrice / 10) * 10 - 1));
-          
-          const name = `${brand} ${color} ${style} ${catName.replace(/s$/, '')} V-${i+1}`;
-          const description = `A premium ${style.toLowerCase()} ${catName.toLowerCase()} designed by ${brand}. Crafted with high-grade materials in ${color.toLowerCase()}, perfect for ${config.occasions.join(' or ')} wear. Offers unmatched comfort and durability.`;
-          
-          // Visually distinct photo generation using the curated lists
-          const photoId = getCuratedPhoto(catName, i);
-          const imageUrl = `https://images.unsplash.com/${photoId}?w=500&auto=format&fit=crop&q=80`;
-          
-          const pResult = await client.query(
-            `INSERT INTO products (name, description, price, category_id, brand, image_url, gender, style, occasion) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-            [name, description, price, catMap[catName], brand, imageUrl, config.gender, style, JSON.stringify(config.occasions)]
-          );
-          const productId = pResult.rows[0].id;
+          for (let i = 0; i < config.count; i++) {
+            const brand = config.brands[i % config.brands.length];
+            const color = config.colors[i % config.colors.length];
+            const style = config.styles[i % config.styles.length];
+            
+            // Realistic Price Boundaries Clamping & Niceness
+            const rawPrice = config.minPrice + Math.floor(Math.random() * (config.maxPrice - config.minPrice + 1));
+            const price = Math.min(config.maxPrice, Math.max(config.minPrice, Math.round(rawPrice / 10) * 10 - 1));
+            
+            const name = `${brand} ${color} ${style} ${catName.replace(/s$/, '')} V-${i+1}`;
+            const description = `A premium ${style.toLowerCase()} ${catName.toLowerCase()} designed by ${brand}. Crafted with high-grade materials in ${color.toLowerCase()}, perfect for ${config.occasions.join(' or ')} wear. Offers unmatched comfort and durability.`;
+            
+            // Visually distinct photo generation using the curated lists
+            const photoId = getCuratedPhoto(catName, i);
+            const imageUrl = `https://images.unsplash.com/${photoId}?w=500&auto=format&fit=crop&q=80`;
+            
+            const pResult = await client.query(
+              `INSERT INTO products (name, description, price, category_id, brand, image_url, gender, style, occasion) 
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+              [name, description, price, catMap[catName], brand, imageUrl, config.gender, style, JSON.stringify(config.occasions)]
+            );
+            const productId = pResult.rows[0].id;
 
-          // Seed 3 variants for each product
-          let sizes = ['S', 'M', 'L', 'XL'];
-          if (catName.includes("Shoes") || catName.includes("Loafers") || catName.includes("Sneakers") || catName.includes("Heels") || catName.includes("Flats") || catName.includes("Sandals")) {
-            sizes = ['7', '8', '9', '10'];
-          } else if (["Watches", "Belts", "Wallets", "Sunglasses", "Earrings", "Bangles", "Necklaces", "Rings", "Handbags", "Clutches"].includes(catName)) {
-            sizes = ['One Size'];
-          }
+            // Seed 3 variants for each product
+            let sizes = ['S', 'M', 'L', 'XL'];
+            if (catName.includes("Shoes") || catName.includes("Loafers") || catName.includes("Sneakers") || catName.includes("Heels") || catName.includes("Flats") || catName.includes("Sandals")) {
+              sizes = ['7', '8', '9', '10'];
+            } else if (["Watches", "Belts", "Wallets", "Sunglasses", "Earrings", "Bangles", "Necklaces", "Rings", "Handbags", "Clutches"].includes(catName)) {
+              sizes = ['One Size'];
+            }
 
-          const varColors = [color];
-          // Get other colors
-          for (const c of config.colors) {
-            if (varColors.length < 3 && c !== color) {
-              varColors.push(c);
+            const varColors = [color];
+            // Get other colors
+            for (const c of config.colors) {
+              if (varColors.length < 3 && c !== color) {
+                varColors.push(c);
+              }
+            }
+
+            for (let j = 0; j < varColors.length; j++) {
+              const size = sizes[j % sizes.length];
+              const varColor = varColors[j];
+              const stock = Math.floor(Math.random() * 80) + 20; // 20 to 100
+              const sku = `SKU-${productId.substring(0, 5)}-${size.replace(/\s+/g, '')}-${varColor}-${j}`;
+
+              await client.query(
+                `INSERT INTO product_variants (product_id, size, color, stock_quantity, sku) 
+                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+                [productId, size, varColor, stock, sku]
+              );
             }
           }
-
-          for (let j = 0; j < varColors.length; j++) {
-            const size = sizes[j % sizes.length];
-            const varColor = varColors[j];
-            const stock = Math.floor(Math.random() * 80) + 20; // 20 to 100
-            const sku = `SKU-${productId.substring(0, 5)}-${size.replace(/\s+/g, '')}-${varColor}-${j}`;
-
-            await client.query(
-              `INSERT INTO product_variants (product_id, size, color, stock_quantity, sku) 
-               VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-              [productId, size, varColor, stock, sku]
-            );
-          }
         }
+        console.log('Seed data inserted.');
+      } else {
+        console.log('Product catalog already seeded. Skipping product seeding.');
       }
-      console.log('Seed data inserted.');
-    }
     
     console.log('Product DB initialization complete.');
   } catch (err) {
